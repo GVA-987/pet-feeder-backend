@@ -1,42 +1,34 @@
-import dotenv from 'dotenv';
+import mqtt from 'mqtt';
+import * as dotenv from 'dotenv';
+import { handleMqttMessage } from '../handlers/mqttHandlers.js';
 
 dotenv.config();
 
-const mqttConfig = {
-    // broker
-    host: process.env.MQTT_HOST || 'localhost',
-    port: parseInt(process.env.MQTT_PORT || '8883'),
-    protocol: process.env.MQTT_PROTOCOL || 'mqtts',
+const MQTT_BROKER = process.env.MQTT_BROKER || 'broker.hivemq.com';
+const MQTT_PORT = process.env.MQTT_PORT || 1883;
 
-    // Credential
-    username: process.env.MQTT_USERNAME,
-    password: process.env.MQTT_PASSWORD,
+// Inicializar el Cliente MQTT
+export const mqttClient = mqtt.connect(`mqtt://${MQTT_BROKER}:${MQTT_PORT}`, {
+    clientId: 'PetFeeder_NodeBridge',
 
-    // Client setting
-    clientId: `backend-${process.env.DEVICE_ID || 'ESP-PET-J1PZ8X7-A3B6C9D'}-${Date.now()}`,
-    clean: true,
-    keepalive: 30,
-    reconnectPeriod: 5000,
+});
 
-    rejectUnauthorized: false,
-    will: {
-        topic: `device/${process.env.DEVICE_ID || 'ESP-PET-001'}/status/backend_online`,
-        payload: JSON.stringify({ online: false, timestamp: new Date().toISOString() }),
-        qos: 1,
-        retain: true,
-    },
-};
+// Manejar Conexión/Desconexión
+mqttClient.on('connect', () => {
+    console.log(`MQTT: Conectado al broker ${MQTT_BROKER}`);
+    mqttClient.subscribe('petfeeder/+/status', (err) => {
+        if (!err) {
+            console.log(`   Suscrito a tópico de Status: petfeeder/+/status`);
+        }
+    });
+});
 
-// config validation
-function validateMQTTConfig() {
-    const required = ['host', 'username', 'password'];
-    const missing = required.filter(key => !mqttConfig[key]);
+mqttClient.on('error', (err) => {
+    console.error('MQTT: Error de conexión:', err);
+    mqttClient.end();
+});
 
-    if (missing.length > 0) {
-        throw new Error(`Missing MQTT configuration: ${missing.join(', ')}`);
-    }
 
-    console.log('MQTT configuration validated');
-}
-
-export { mqttConfig, validateMQTTConfig };
+mqttClient.on('message', (topic, message) => {
+    handleMqttMessage(topic, message.toString());
+});

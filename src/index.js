@@ -1,77 +1,42 @@
-import { mqttConfig, validateMQTTConfig } from './config/mqtt.js';
-import { db, admin } from './config/firebase.js';
-import CONSTANTS from './config/constants.js';
-import { SUBSCRIBE_PATTERNS, STATUS_TOPICS } from './utils/mqtt-topics.js';
-import mqtt from 'mqtt';
+import 'dotenv/config';
+import { mqttClient } from './config/mqtt.js'; //conexión MQTT
+import { listenToCommands } from './services/firebaseRTDB.js'; // Listener de RTDB
+import * as dotenv from 'dotenv';
 
-console.log(`Pet Feeder Backend - Starting...`);
+dotenv.config();
 
-// CONNECT TO MQTT
-console.log('Connecting to MQTT broker...');
-try {
-    validateMQTTConfig();
-    const client = mqtt.connect(mqttConfig);
+// ID del dispositivo que queremos monitorear
+const TARGET_DEVICE_ID = process.env.TARGET_DEVICE_ID || "ESP-PET-J1PZ8X7-A3B6C9D";
 
-    client.on('connect', () => {
-        console.log('Connected to MQTT broker');
-        console.log(`   Host: ${mqttConfig.host}`);
-        console.log(`   Port: ${mqttConfig.port}`);
+console.log(`Iniciando Bridge MQTT <-> Firebase para ${TARGET_DEVICE_ID}`);
 
-        // Subscribe to all topics
-        client.subscribe(SUBSCRIBE_PATTERNS, (err) => {
-            if (err) {
-                console.error('Subscribe error:', err);
-            } else {
-                console.log('Subscribed to MQTT topics');
-                SUBSCRIBE_PATTERNS.forEach(topic => {
-                    console.log(` -> ${topic}`);
-                });
-            }
-        });
+// Esperar a que el cliente MQTT esté listo antes de escuchar RTDB
+mqttClient.on('connect', () => {
+
+    listenToCommands(TARGET_DEVICE_ID, (commandData) => {
+
+        const manualDispense = commandData.dispense_manual;
+        const portion = commandData.food_portion;
+
+        if (manualDispense === 'activado') {
+            const mqttPayload = {
+                action: 'dispense',
+                portion: portion || 1,
+            };
+
+            const commandTopic = `petfeeder/${TARGET_DEVICE_ID}/command`;
+
+            // Publicar el comando al ESP32 a través de MQTT
+            mqttClient.publish(commandTopic, JSON.stringify(mqttPayload), (err) => {
+                if (!err) {
+                    console.log(`-> Comando DISPENSE enviado a MQTT para ${TARGET_DEVICE_ID}. Porción: ${portion}`);
+                }
+            });
+
+            // Resetear el comando en RTDB
+            // db.ref(`${TARGET_DEVICE_ID}/commands`).update({ dispense_manual: 'desactivado' }); 
+        }
     });
 
-    client.on('error', (error) => {
-        console.error('MQTT error:', error.message);
-    });
-
-    client.on('message', (topic, message) => {
-        console.log(`MQTT Message received:`);
-        console.log(`   Topic: ${topic}`);
-        console.log(`   Payload: ${message.toString()}`);
-    });
-
-} catch (error) {
-    console.error('MQTT connection failed:', error.message);
-    process.exit(1);
-}
-
-
-// Test Firebase
-console.log('\nTesting Firebase connection...');
-
-try {
-    const ref = db.ref('test');
-    ref.set({ connected: true, timestamp: new Date().toISOString() })
-        .then(() => {
-            console.log('Connected to Firebase');
-        })
-        .catch(error => {
-            console.error('Firebase write error:', error.message);
-        });
-} catch (error) {
-    console.error('Firebase error:', error.message);
-}
-// End Test Firebase
-
-// START SERVER
-console.log(`\nServer starting on port ${CONSTANTS.PORT}`);
-console.log(`   Environment: ${CONSTANTS.NODE_ENV}`);
-console.log(`   Log Level: ${CONSTANTS.LOG_LEVEL}`);
-
-console.log(`Application Ready`);
-
-// Keep process alive
-process.on('SIGINT', () => {
-    console.log('\nShutting down gracefully...');
-    process.exit(0);
+    console.log(`Bridge listo. Escuchando comandos de RTDB...`);
 });
