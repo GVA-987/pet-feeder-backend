@@ -1,9 +1,9 @@
-// src/handlers/mqttHandlers.js
-
+import { firestore } from '../config/firebase.js';
+import admin from 'firebase-admin';
 import * as RTDBService from '../services/firebaseRTDB.js';
 import * as FirestoreService from '../services/firestore.js';
 
-export const handleMqttMessage = (topic, rawPayload) => {
+export const handleMqttMessage = async (topic, rawPayload) => {
     // Extraer el DEVICE_ID del tópico 
     const topicParts = topic.split('/');
     if (topicParts.length < 3) return;
@@ -16,27 +16,40 @@ export const handleMqttMessage = (topic, rawPayload) => {
         // MANEJO DE STATUS DEL DISPOSITIVO 
         if (messageType === 'status') {
 
-            // Actualizar estado general en RTDB
-            RTDBService.updateDeviceStatus(deviceId, {
-                temperature: payload.temp,
-                foodLevel: payload.food,
-                rssi: payload.rssi,
-                online: payload.online ? 'conectado' : 'desconectado',
-            });
+            const isOnline = payload.online === true;
+            const connectionStatus = isOnline ? 'conectado' : 'desconectado';
 
-            console.log(`<- Mensaje STATUS recibido de ${deviceId}`);
+            let updateData = {
+                online: connectionStatus,
+                lastSeen: admin.database.ServerValue.TIMESTAMP
+            };
 
-            // Si el payload incluye datos de dispensación, loguear
-            if (payload.dispenseLog) {
-                FirestoreService.logDispenseToFirestore(deviceId, payload.dispenseLog);
-                RTDBService.updateDeviceStatus(deviceId, {
-                    lastDispense: {
-                        ...payload.dispenseLog,
-                        timestamp: new Date().toISOString(),
-                    }
-                });
+            if (payload.temp !== undefined) updateData.temperature = payload.temp;
+            if (payload.food !== undefined) updateData.foodLevel = payload.food;
+            if (payload.rssi !== undefined) updateData.rssi = payload.rssi;
+
+            await RTDBService.updateDeviceStatus(deviceId, updateData);
+
+            console.log(`Mensaje STATUS recibido de ${deviceId}`);
+
+            // Guardar historial en firestore
+            if (payload.status === "completado") {
+
+                const historyData = {
+                    deviceId: deviceId,
+                    portion: Number(payload.portion) || 1,
+                    status: payload.status,
+                    type: payload.type || "manual",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp()
+                };
+
+                await firestore.collection('dispense_history').add(historyData);
+
+                console.log(`Historial guardado en Firestore para: ${deviceId}`);
             }
         }
+
+
     } catch (e) {
         console.error(`Fallo al parsear JSON de MQTT para ${deviceId}:`, e);
     }

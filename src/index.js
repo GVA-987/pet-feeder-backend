@@ -1,41 +1,57 @@
 import 'dotenv/config';
 import { mqttClient } from './config/mqtt.js'; //conexión MQTT
-import { listenToCommands } from './services/firebaseRTDB.js'; // Listener de RTDB
-import * as dotenv from 'dotenv';
+import { listenToAllDevices } from './services/firebaseRTDB.js'; // Listener de RTDB
+import { ref, onValue, update } from "firebase/database";
+import { db } from './config/firebase.js';
 
-dotenv.config();
+console.log(`Iniciando Bridge MQTT <-> Firebase`);
 
-// ID del dispositivo que queremos monitorear
-const TARGET_DEVICE_ID = process.env.TARGET_DEVICE_ID || "ESP-PET-J1PZ8X7-A3B6C9D";
-
-console.log(`Iniciando Bridge MQTT <-> Firebase para ${TARGET_DEVICE_ID}`);
-
-// Esperar a que el cliente MQTT esté listo antes de escuchar RTDB
+// Espera del cliente MQTT antes de escuchar RTDB
 mqttClient.on('connect', () => {
+    console.log("Conectado a MQTT. Esperando cambios en RTDB... ");
 
-    listenToCommands(TARGET_DEVICE_ID, (commandData) => {
+    listenToAllDevices((deviceId, commands) => {
 
-        const manualDispense = commandData.dispense_manual;
-        const portion = commandData.food_portion;
+        const manualDispense = commands.dispense_manual;
+        const portion = commands.food_portion;
 
         if (manualDispense === 'activado') {
             const mqttPayload = {
                 action: 'dispense',
-                portion: portion || 1,
+                portion: parseInt(portion) || 1
             };
 
-            const commandTopic = `petfeeder/${TARGET_DEVICE_ID}/command`;
+            const commandTopic = `petfeeder/${deviceId}/command`;
 
-            // Publicar el comando al ESP32 a través de MQTT
-            mqttClient.publish(commandTopic, JSON.stringify(mqttPayload), (err) => {
+            mqttClient.publish(commandTopic, JSON.stringify(mqttPayload), { qos: 1 }, (err) => {
                 if (!err) {
-                    console.log(`-> Comando DISPENSE enviado a MQTT para ${TARGET_DEVICE_ID}. Porción: ${portion}`);
+                    console.log(`Comando ENVIADO a ${deviceId} (Porciones: ${mqttPayload.portion})`);
+
+                    const deviceRef = db.ref(`${deviceId}/commands`);
+                    deviceRef.update({ dispense_manual: 'desactivado' });
                 }
             });
-
-            // Resetear el comando en RTDB
-            // db.ref(`${TARGET_DEVICE_ID}/commands`).update({ dispense_manual: 'desactivado' }); 
         }
+
+        if (commands.reset_wifi === 'activado') {
+            const mqttPayload = {
+                action: 'reset_wifi'
+            };
+
+            const commandTopic = `petfeeder/${deviceId}/command`;
+
+            mqttClient.publish(commandTopic, JSON.stringify(mqttPayload), { qos: 1 }, (err) => {
+                if (!err) {
+                    console.log(`Comando de RESET enviado a ${deviceId}`);
+
+                    // Limpieza del flag en RTDB para que no entre en bucle de reinicios
+                    const deviceRef = db.ref(`${deviceId}/commands`);
+                    deviceRef.update({ reset_wifi: 'desactivado' });
+                }
+            });
+        }
+
+
     });
 
     console.log(`Bridge listo. Escuchando comandos de RTDB...`);

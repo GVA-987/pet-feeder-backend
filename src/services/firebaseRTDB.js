@@ -12,7 +12,7 @@ export const updateDeviceStatus = async (deviceId, statusData) => {
     }
 };
 
-// funcion para escuchar comandos entrantes
+// escuchar comandos entrantes
 export const listenToCommands = (deviceId, callback) => {
     const commandsRef = db.ref(`${deviceId}/commands`);
 
@@ -22,4 +22,18 @@ export const listenToCommands = (deviceId, callback) => {
         }
     });
     return () => commandsRef.off();
+};
+
+export const listenToAllDevices = (callback) => {
+    // Escuchamos la raíz de la RTDB
+    const devicesRef = db.ref('/');
+
+    devicesRef.on('child_changed', (snapshot) => {
+        const deviceId = snapshot.key; // Obtener el ID de dispositivos registrados en RTDB
+        const data = snapshot.val();
+
+        if (data.commands) {
+            callback(deviceId, data.commands);
+        }
+    });
 };
