@@ -33,13 +33,14 @@ export const handleMqttMessage = async (topic, rawPayload) => {
             console.log(`Mensaje STATUS recibido de ${deviceId}`);
 
             // Guardar historial en firestore
-            if (payload.status === "completado") {
+            if (payload.event === "dispense_done" && payload.status === "completado") {
 
                 const historyData = {
                     deviceId: deviceId,
-                    portion: Number(payload.portion) || 1,
+                    portion: Number(payload.portion),
                     status: payload.status,
-                    type: payload.type || "manual",
+                    type: payload.type,
+                    online: connectionStatus,
                     timestamp: admin.firestore.FieldValue.serverTimestamp()
                 };
 

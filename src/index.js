@@ -2,13 +2,14 @@ import 'dotenv/config';
 import { mqttClient } from './config/mqtt.js'; //conexión MQTT
 import { listenToAllDevices } from './services/firebaseRTDB.js'; // Listener de RTDB
 import { ref, onValue, update } from "firebase/database";
-import { db } from './config/firebase.js';
+import { db, firestore } from './config/firebase.js';
 
 console.log(`Iniciando Bridge MQTT <-> Firebase`);
 
 // Espera del cliente MQTT antes de escuchar RTDB
 mqttClient.on('connect', () => {
     console.log("Conectado a MQTT. Esperando cambios en RTDB... ");
+    mqttClient.subscribe('petfeeder/+/status', { qos: 1 });
 
     listenToAllDevices((deviceId, commands) => {
 
@@ -43,8 +44,6 @@ mqttClient.on('connect', () => {
             mqttClient.publish(commandTopic, JSON.stringify(mqttPayload), { qos: 1 }, (err) => {
                 if (!err) {
                     console.log(`Comando de RESET enviado a ${deviceId}`);
-
-                    // Limpieza del flag en RTDB para que no entre en bucle de reinicios
                     const deviceRef = db.ref(`${deviceId}/commands`);
                     deviceRef.update({ reset_wifi: 'desactivado' });
                 }
@@ -55,4 +54,28 @@ mqttClient.on('connect', () => {
     });
 
     console.log(`Bridge listo. Escuchando comandos de RTDB...`);
+});
+
+// Sincroniza horarios desde Firestore a los dispositivos vía MQTT
+firestore.collection('devicesPet').onSnapshot(snapshot => {
+    snapshot.docChanges().forEach(change => {
+        if (change.type === 'added' || change.type === 'modified') {
+            const deviceData = change.doc.data();
+            const deviceId = change.doc.id;
+
+            if (deviceData.schedule && Array.isArray(deviceData.schedule)) {
+                const schedulePayload = deviceData.schedule.map(item => ({
+                    id: item.id,
+                    time: item.time,
+                    portion: item.portion,
+                    days: item.days,
+                    enabled: item.enabled
+                }));
+
+                const topic = `petfeeder/${deviceId}/schedule`;
+                mqttClient.publish(topic, JSON.stringify(schedulePayload), { qos: 1, retain: true });
+                console.log(`📡 [${deviceId}] Agenda sincronizada`);
+            }
+        }
+    });
 });
