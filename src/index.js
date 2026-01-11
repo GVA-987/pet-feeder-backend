@@ -87,7 +87,7 @@ app.listen(PORT, '0.0.0.0', () => {
 
                     const topic = `petfeeder/${deviceId}/schedule`;
                     mqttClient.publish(topic, JSON.stringify(schedulePayload), { qos: 1, retain: true });
-                    console.log(`📡 [${deviceId}] Agenda sincronizada`);
+                    console.log(`[${deviceId}] Agenda sincronizada`);
                 }
             }
         });

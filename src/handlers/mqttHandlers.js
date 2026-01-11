@@ -1,7 +1,6 @@
 import { firestore } from '../config/firebase.js';
 import admin from 'firebase-admin';
 import * as RTDBService from '../services/firebaseRTDB.js';
-import * as FirestoreService from '../services/firestore.js';
 
 export const handleMqttMessage = async (topic, rawPayload) => {
     // Extraer el DEVICE_ID del tópico 
@@ -30,28 +29,55 @@ export const handleMqttMessage = async (topic, rawPayload) => {
 
             await RTDBService.updateDeviceStatus(deviceId, updateData);
 
-            console.log(`Mensaje STATUS recibido de ${deviceId}`);
+            const shouldLogConnection =
+                payload.event === "connection_change" ||
+                payload.event === "startup" ||
+                !isOnline;
+
+            if (shouldLogConnection) {
+                await firestore.collection('device_logs').add({
+                    deviceId: deviceId,
+                    action: isOnline ? 'DEVICE_ONLINE' : 'DEVICE_OFFLINE',
+                    details: isOnline
+                        ? "El alimentador se ha conectado y está listo."
+                        : "El alimentador ha perdido la conexión (LWT).",
+                    type: isOnline ? "success" : "warning",
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                console.log(`[LOG] Historial de conexión registrado: ${deviceId} (${connectionStatus})`);
+            }
 
             // Guardar historial en firestore
-            if (payload.event === "dispense_done" && payload.status === "completado") {
+            if (payload.event === "dispense_done") {
 
-                const historyData = {
-                    deviceId: deviceId,
-                    portion: Number(payload.portion),
-                    status: payload.status,
-                    type: payload.type,
-                    online: connectionStatus,
-                    timestamp: admin.firestore.FieldValue.serverTimestamp()
-                };
+                if (payload.status === "completado") {
+                    const historyData = {
+                        deviceId: deviceId,
+                        portion: Number(payload.portion),
+                        status: payload.status,
+                        type: payload.type || 'programado',
+                        timestamp: admin.firestore.FieldValue.serverTimestamp()
+                    };
+                    await firestore.collection('dispense_history').add(historyData);
+                    console.log(`[HISTORIAL] Dispensación exitosa para ${deviceId}`);
+                }
 
-                await firestore.collection('dispense_history').add(historyData);
-
-                console.log(`Historial guardado en Firestore para: ${deviceId}`);
+                // Si hubo un error, registrarlo como una alerta en device_logs
+                if (payload.status === "error") {
+                    await firestore.collection('device_logs').add({
+                        deviceId: deviceId,
+                        action: "DISPENSE_ERROR",
+                        details: payload.error_msg || "Fallo mecánico o motor atascado.",
+                        timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                        type: 'error'
+                    });
+                    console.error(`[ERROR] Fallo de dispensación en ${deviceId}`);
+                }
             }
         }
 
 
     } catch (e) {
-        console.error(`Fallo al parsear JSON de MQTT para ${deviceId}:`, e);
+        console.error(`Error procesando MQTT de ${deviceId}:`, e);
     }
 };
