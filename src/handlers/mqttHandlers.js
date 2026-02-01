@@ -9,10 +9,15 @@ export const handleMqttMessage = async (topic, rawPayload) => {
   const deviceId = topicParts[1];
   const messageType = topicParts[2];
 
+  const rawString = rawPayload.toString();
+
+  if (!rawString.trim().startsWith("{") && !rawString.trim().startsWith("[")) {
+    return; // Evita el crash por SyntaxError
+  }
+
   try {
     const payload = JSON.parse(rawPayload);
 
-    // MANEJO DE STATUS DEL DISPOSITIVO
     if (messageType === "status") {
       const isOnline = payload.online === true;
       const connectionStatus = isOnline ? "conectado" : "desconectado";
